@@ -1,0 +1,42 @@
+name: Publish standards
+
+# On merge to main, publish the standards to the S3 bucket the MCP server reads,
+# with a manifest naming the commit. Uses GitHub OIDC: no AWS keys are stored.
+# STANDARDS_ROLE_ARN and STANDARDS_BUCKET are repository variables, set after the
+# CDK stack is deployed (Demo 4 build plan, step 8).
+
+on:
+  push:
+    branches: [main]
+    paths: ["**/*.md", ".github/workflows/sync.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: publish-standards
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.STANDARDS_ROLE_ARN }}
+          aws-region: eu-west-1
+
+      - name: Write manifest
+        run: |
+          printf '{"commit":"%s","shortCommit":"%s","publishedAt":"%s"}\n' \
+            "$GITHUB_SHA" "${GITHUB_SHA::7}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > manifest.json
+
+      - name: Publish
+        run: |
+          aws s3 sync . "s3://${{ vars.STANDARDS_BUCKET }}/standards/" \
+            --exclude "*" --include "*/*.md" --delete
+          aws s3 cp manifest.json "s3://${{ vars.STANDARDS_BUCKET }}/standards/manifest.json"
